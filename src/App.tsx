@@ -122,7 +122,7 @@ function buildRouter() {
 }
 
 export function App() {
-  const { setProjectPath, setPlatform, setHomePath, setError, setBackendHealthy, projectPath, homePath } = useAppStore()
+  const { setProjectPath, setPlatform, setHomePath, setError, setBackendHealthy, projectPath, homePath, theme, setTheme } = useAppStore()
   const fsRefreshTimer = useRef<number | undefined>(undefined)
   useTheme()
 
@@ -157,6 +157,7 @@ export function App() {
     electronApi.onMenuAction((action, payload) => {
       if (action === 'refresh')         window.dispatchEvent(new Event('cct:refresh'))
       if (action === 'toggle-sidebar')  window.dispatchEvent(new Event('cct:toggle-sidebar'))
+      if (action === 'toggle-theme')    setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'auto' : 'light')
       if (action === 'navigate')        window.dispatchEvent(new CustomEvent('cct:navigate', { detail: payload }))
     })
     electronApi.onSwitchProject((newPath) => {
@@ -173,24 +174,37 @@ export function App() {
       if (fsRefreshTimer.current) window.clearTimeout(fsRefreshTimer.current)
       electronApi.offAll()
     }
-  }, [setProjectPath])
+  }, [setProjectPath, setTheme, theme])
 
-  // Electron: watch only config paths. Avoid recursively watching the user's home dir.
+  // Electron: watch only known config and session roots. Avoid recursively watching the user's home dir.
   useEffect(() => {
     if (!isElectron || !projectPath || !homePath) return
+    let cancelled = false
     const paths = [
       `${homePath}/.claude/CLAUDE.md`,
       `${homePath}/.claude/settings.json`,
+      `${homePath}/.claude/agents`,
+      `${homePath}/.claude/commands`,
+      `${homePath}/.claude/skills`,
       `${homePath}/.codex/AGENTS.md`,
       `${homePath}/.codex/config.toml`,
+      `${homePath}/.codex/agents`,
+      `${homePath}/.codex/skills`,
       `${projectPath}/CLAUDE.md`,
       `${projectPath}/AGENTS.md`,
-      `${projectPath}/.claude/settings.json`,
-      `${projectPath}/.claude/settings.local.json`,
-      `${projectPath}/.codex/config.toml`,
+      `${projectPath}/.claude`,
+      `${projectPath}/.codex`,
     ]
-    electronApi.watchPath(Array.from(new Set(paths))).catch(() => {/* ignore */})
-    return () => { electronApi.unwatch().catch(() => {/* ignore */}) }
+    api.sessions.watchPaths()
+      .catch(() => [])
+      .then((sessionPaths) => {
+        if (cancelled) return
+        electronApi.watchPath(Array.from(new Set([...paths, ...sessionPaths]))).catch(() => {/* ignore */})
+      })
+    return () => {
+      cancelled = true
+      electronApi.unwatch().catch(() => {/* ignore */})
+    }
   }, [projectPath, homePath])
 
   // Heartbeat: ping /health every 5s, update backendHealthy
